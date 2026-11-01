@@ -65,12 +65,43 @@ function setLocation(lat,lon,name='',popup=false){
  marker.bindPopup(`<div class="location-popup"><strong>${name||`${lat.toFixed(3)}°, ${lon.toFixed(3)}°`}</strong><svg viewBox="0 0 180 150" aria-label="الشمس والقمر عند ذروة الكسوف، الشمال أعلى والشرق يسار"><rect width="180" height="150" rx="8" fill="#17251f"/>${hasCorona(max)?coronaMarkup('popup-corona',90,75,36):''}<circle cx="90" cy="75" r="36" fill="#ffdf8e"/><circle cx="${90+dx}" cy="${75+dy}" r="${r}" fill="#17251f"/><text x="90" y="17" text-anchor="middle" fill="#e9d9ae" font-size="10">شمال سماوي ↑</text></svg><b>${result.hasVisible?eclipseType(max):'غير مرئي'}</b><br>${result.hasVisible?'حجب '+arNum(Eclipse.obscuration(max)*100)+'٪ · ':''}${Eclipse.time(e,max.t)} UTC<br><a href="#localExplorer">المراحل والتفاصيل ↓</a></div>`);if(popup)marker.openPopup();
 }
 if(typeof L!=='undefined'){
- map=L.map('map',{scrollWheelZoom:false,minZoom:1,maxZoom:9,maxBounds:[[-90,-180],[90,180]]}).setView([29,20],3);
+ map=L.map('map',{scrollWheelZoom:false,minZoom:1,maxZoom:19,maxBounds:[[-85,-180],[85,180]]}).setView([29,20],3);
+ map.createPane('streets');map.getPane('streets').style.zIndex=260;map.getPane('streets').style.pointerEvents='none';
  map.createPane('geography');map.getPane('geography').style.zIndex=250;map.createPane('partial');map.getPane('partial').style.zIndex=300;
  fetch('countries.json').then(r=>{if(!r.ok)throw Error();return r.json()}).then(data=>L.geoJSON(data,{pane:'geography',style:{color:'#bec4b4',weight:1,fillColor:'#f1f0e6',fillOpacity:1},onEachFeature:(f,l)=>l.bindTooltip(f.properties.name)}).addTo(map)).catch(()=>{$('#mapTitle').textContent='تعذر تحميل حدود الدول';});
  map.attributionControl.addAttribution('<a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a> · NASA GSFC');
  const labels=[['فلسطين',31.7,35.1],['المغرب',32,-7],['الجزائر',29,2],['ليبيا',27,18],['مصر',27,30],['السعودية',23,45],['اليمن',15,46],['السودان',16,30],['إسبانيا',40,-4],['تونس',34,9],['الصومال',7,47]];
  labels.forEach(([name,lat,lon])=>L.marker([lat,lon],{icon:L.divIcon({className:'country-label'+(name==='فلسطين'?' palestine-label':''),html:name,iconSize:[70,20]}),interactive:false}).addTo(map));
+
+ // Detailed vector basemap; label styling is local to this website.
+ const mapNotice=document.createElement('p');mapNotice.className='small';mapNotice.setAttribute('role','status');mapNotice.textContent='جارٍ تحميل خريطة الشوارع والمدن…';$('.map-sidebar').append(mapNotice);
+ const mapLabelNote=document.createElement('p');mapLabelNote.className='small';mapLabelNote.textContent='تسميات الدول مخصّصة لهذا الموقع. كبّر لرؤية المدن والبلدات والطرق؛ التفاصيل بحسب البيانات المتاحة.';$('.map-sidebar').append(mapLabelNote);
+ function script(url){return new Promise((resolve,reject)=>{const el=document.createElement('script');el.src=url;el.onload=resolve;el.onerror=reject;document.head.append(el);});}
+ async function detailedMap(){
+  try{
+   const css=document.createElement('link');css.rel='stylesheet';css.href='https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.1/dist/maplibre-gl.css';document.head.append(css);
+   await script('https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.1/dist/maplibre-gl.js');
+   await script('https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js');
+   maplibregl.setRTLTextPlugin('https://cdn.jsdelivr.net/npm/@mapbox/mapbox-gl-rtl-text@0.3.0/dist/mapbox-gl-rtl-text.js',true);
+   const response=await fetch('https://tiles.openfreemap.org/styles/liberty');if(!response.ok)throw Error('style');
+   const style=await response.json();
+   const customCountry=['any',['match',['get','iso_a2'],['IL','PS'],true,false],['match',['coalesce',['get','name:en'],['get','name_en'],['get','name:latin'],['get','name'],''],['Israel','Palestine','ישראל','إسرائيل','فلسطين'],true,false]];
+   for(const layer of style.layers){
+    if(layer.id.startsWith('label_country'))layer.filter=['all',layer.filter,['!',customCountry]];
+    if(layer.layout&&layer.layout['text-field']&&!layer.id.includes('shield')){
+     layer.layout['text-field']=['coalesce',['get','name:ar'],['get','name:en'],['get','name_en'],['get','name:latin'],['get','name'],''];
+    }
+   }
+   const streets=L.maplibreGL({style,pane:'streets',interactive:false,attribution:'<a href="https://openfreemap.org/">OpenFreeMap</a> · <a href="https://openmaptiles.org/">OpenMapTiles</a> · © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(map);
+   const gl=streets.getMaplibreMap();
+   gl.on('load',()=>{map.getContainer().classList.add('streets-ready');mapNotice.textContent='خريطة الشوارع والمدن · كبّر باستخدام + أو بإصبعين';});
+   gl.on('error',()=>{mapNotice.textContent='قد تتأخر بعض تفاصيل الشوارع بسبب الاتصال. خريطة الكسوف ما زالت متاحة.';});
+  }catch(error){console.error('Street map loading:',error);mapNotice.textContent=/WebGL/i.test(String(error))?'تفاصيل الشوارع تحتاج دعم WebGL في المتصفح. الخريطة العامة وحسابات الكسوف متاحة.':'تعذر تحميل تفاصيل الشوارع الآن؛ الخريطة العامة وحسابات الكسوف متاحة. أعد تحميل الصفحة للمحاولة.';}
+ }
+ const detailStyle=document.createElement('style');detailStyle.textContent='#map.streets-ready .country-label:not(.palestine-label){display:none}#map.street-close .country-label{display:none}';document.head.append(detailStyle);
+ map.on('zoomend',()=>map.getContainer().classList.toggle('street-close',map.getZoom()>8));
+ detailedMap();
+
  function sync(){if(!band)return;$('#partial').checked?partialLayer.addTo(map):map.removeLayer(partialLayer);$('#band').checked?band.addTo(map):map.removeLayer(band);$('#center').checked?line.addTo(map):map.removeLayer(line);}
  async function loadMap(){let req=++request,year=$('#event').value;$('#mapTitle').textContent='جارٍ تحميل الخريطة…';try{
  const [data,partial,elementData]=await Promise.all([fetch(`path${year}.json`).then(r=>r.json()),fetch(`partial${year}.json`).then(r=>r.json()),events||fetch('elements.json').then(r=>r.json())]);if(req!==request)return;events=elementData;rows=data;
