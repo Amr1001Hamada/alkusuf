@@ -44,6 +44,7 @@ for(const target of [$('.experiment .small'),$('.local-visual')]){
  const note=document.createElement('p');note.className='corona-note';note.textContent='الهالة الشمسية رسم تعليمي يظهر أثناء الكلية فقط، وليس توقعًا لشكلها الفعلي يوم الكسوف.';target.matches('.small')?target.insertAdjacentElement('afterend',note):target.append(note);
 }
 $('#phase').oninput=e=>{const value=+e.target.value,offset=(value-50)*3.8,total=Math.abs(offset)<=3;$('#moon').style.transform=`translateX(${offset}px)`;simCorona.style.visibility=total?'visible':'hidden';$('.simulation').classList.toggle('corona-visible',total);$('#phaseLabel').textContent=total?'كسوف كلي · الهالة الشمسية':Math.abs(offset)>=143?'قبل التداخل أو بعده':'كسوف جزئي';$('.simulation').setAttribute('aria-label',total?'كسوف كلي تظهر فيه الهالة الشمسية حول قرص القمر':'رسم تفاعلي لحجب القمر لقرص الشمس')};$('#phase').dispatchEvent(new Event('input'));
+let streetMap=null,streetReady=false,streetPopup=null,cameraSyncing=false;
 let map,band,line,partialLayer,marker,rows=[],request=0,events=null,current=null;
 let selected={lat:25.687,lon:32.639,name:'الأقصر · مصر'};
 const arNum=(v,d=1)=>v.toLocaleString('ar-EG',{maximumFractionDigits:d,minimumFractionDigits:d});
@@ -62,8 +63,27 @@ function setLocation(lat,lon,name='',popup=false){
  $('#contactButtons').replaceChildren(...stages.map(([label,t])=>{const b=document.createElement('button');b.type='button';b.textContent=label;let s=Eclipse.state(e,t,result.observer);b.title=Eclipse.time(e,t)+' UTC'+(s.visible?'':' · تحت الأفق');b.onclick=()=>{$('#localTime').value=t;showTime()};return b}));showTime();
  if(marker)map.removeLayer(marker);marker=L.circleMarker([lat,lon],{radius:6,color:'#284d41',fillColor:'#fff',weight:3,fillOpacity:1}).addTo(map);
  const dx=-max.u/max.sun*36,dy=-max.v/max.sun*36,r=max.moon/max.sun*36;
- marker.bindPopup(`<div class="location-popup"><strong>${name||`${lat.toFixed(3)}°, ${lon.toFixed(3)}°`}</strong><svg viewBox="0 0 180 150" aria-label="الشمس والقمر عند ذروة الكسوف، الشمال أعلى والشرق يسار"><rect width="180" height="150" rx="8" fill="#17251f"/>${hasCorona(max)?coronaMarkup('popup-corona',90,75,36):''}<circle cx="90" cy="75" r="36" fill="#ffdf8e"/><circle cx="${90+dx}" cy="${75+dy}" r="${r}" fill="#17251f"/><text x="90" y="17" text-anchor="middle" fill="#e9d9ae" font-size="10">شمال سماوي ↑</text></svg><b>${result.hasVisible?eclipseType(max):'غير مرئي'}</b><br>${result.hasVisible?'حجب '+arNum(Eclipse.obscuration(max)*100)+'٪ · ':''}${Eclipse.time(e,max.t)} UTC<br><a href="#localExplorer">المراحل والتفاصيل ↓</a></div>`);if(popup)marker.openPopup();
+ marker.bindPopup(`<div class="location-popup"><strong>${name||`${lat.toFixed(3)}°, ${lon.toFixed(3)}°`}</strong><svg viewBox="0 0 180 150" aria-label="الشمس والقمر عند ذروة الكسوف، الشمال أعلى والشرق يسار"><rect width="180" height="150" rx="8" fill="#17251f"/>${hasCorona(max)?coronaMarkup('popup-corona',90,75,36):''}<circle cx="90" cy="75" r="36" fill="#ffdf8e"/><circle cx="${90+dx}" cy="${75+dy}" r="${r}" fill="#17251f"/><text x="90" y="17" text-anchor="middle" fill="#e9d9ae" font-size="10">شمال سماوي ↑</text></svg><b>${result.hasVisible?eclipseType(max):'غير مرئي'}</b><br>${result.hasVisible?'حجب '+arNum(Eclipse.obscuration(max)*100)+'٪ · ':''}${Eclipse.time(e,max.t)} UTC<br><a href="#localExplorer">المراحل والتفاصيل ↓</a></div>`);refreshStreetLayers();if(streetReady){if(streetPopup)streetPopup.remove();if(popup)streetPopup=new maplibregl.Popup().setLngLat([lon,lat]).setHTML(marker.getPopup().getContent()).addTo(streetMap);}else if(popup)marker.openPopup();
 }
+
+function refreshStreetLayers(){
+ if(!streetReady)return;
+ const empty={type:'FeatureCollection',features:[]};
+ for(const [id,layer] of [['eclipse-partial',partialLayer],['eclipse-total',band],['eclipse-center',line]]){
+  streetMap.getSource(id).setData(layer?layer.toGeoJSON():empty);
+ }
+ streetMap.getSource('eclipse-location').setData({type:'Feature',properties:{},geometry:{type:'Point',coordinates:[selected.lon,selected.lat]}});
+ for(const [id,check] of [['eclipse-partial','partial'],['eclipse-total','band'],['eclipse-center','center']]){
+  streetMap.setLayoutProperty(id,'visibility',$('#'+check).checked?'visible':'none');
+ }
+}
+function syncStreetCamera(){
+ if(!streetReady||cameraSyncing)return;
+ cameraSyncing=true;
+ try{const c=map.getCenter();streetMap.jumpTo({center:[c.lng,c.lat],zoom:map.getZoom()-1,bearing:0,pitch:0});}
+ finally{cameraSyncing=false;}
+}
+
 if(typeof L!=='undefined'){
  map=L.map('map',{scrollWheelZoom:false,minZoom:1,maxZoom:19,maxBounds:[[-85,-180],[85,180]]}).setView([29,20],3);
  map.createPane('streets');map.getPane('streets').style.zIndex=260;map.getPane('streets').style.pointerEvents='none';
@@ -81,7 +101,6 @@ if(typeof L!=='undefined'){
   try{
    const css=document.createElement('link');css.rel='stylesheet';css.href='https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.1/dist/maplibre-gl.css';document.head.append(css);
    await script('https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.1/dist/maplibre-gl.js');
-   await script('https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.1.3/leaflet-maplibre-gl.js');
    maplibregl.setRTLTextPlugin('https://cdn.jsdelivr.net/npm/@mapbox/mapbox-gl-rtl-text@0.3.0/dist/mapbox-gl-rtl-text.js',true);
    const response=await fetch('https://tiles.openfreemap.org/styles/liberty');if(!response.ok)throw Error('style');
    const style=await response.json();
@@ -92,17 +111,49 @@ if(typeof L!=='undefined'){
      layer.layout['text-field']=['coalesce',['get','name:ar'],['get','name:en'],['get','name_en'],['get','name:latin'],['get','name'],''];
     }
    }
-   const streets=L.maplibreGL({style,pane:'streets',interactive:false,attribution:'<a href="https://openfreemap.org/">OpenFreeMap</a> · <a href="https://openmaptiles.org/">OpenMapTiles</a> · © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(map);
-   const gl=streets.getMaplibreMap();
-   gl.on('load',()=>{map.getContainer().classList.add('streets-ready');mapNotice.textContent='خريطة الشوارع والمدن · كبّر باستخدام + أو بإصبعين';});
+
+   // All geography, eclipse geometry and the selected point share one renderer/camera.
+   const host=document.createElement('div');host.id='streetCanvas';host.style.cssText='position:absolute;inset:0;z-index:450;visibility:hidden;direction:ltr';map.getContainer().append(host);
+   const c=map.getCenter();
+   const gl=streetMap=new maplibregl.Map({container:host,style,center:[c.lng,c.lat],zoom:map.getZoom()-1,minZoom:0,maxZoom:18,attributionControl:false,scrollZoom:false,dragRotate:false,touchPitch:false,renderWorldCopies:false});
+   gl.touchZoomRotate.disableRotation();
+   L.DomEvent.disableClickPropagation(host);L.DomEvent.disableScrollPropagation(host);
+   gl.on('load',()=>{
+    const empty={type:'FeatureCollection',features:[]};
+    for(const id of ['eclipse-partial','eclipse-total','eclipse-center','eclipse-location'])gl.addSource(id,{type:'geojson',data:empty});
+    gl.addLayer({id:'eclipse-partial',type:'fill',source:'eclipse-partial',paint:{'fill-color':'#dcb86b','fill-opacity':.25}});
+    gl.addLayer({id:'eclipse-total',type:'fill',source:'eclipse-total',paint:{'fill-color':'#ac7b30','fill-opacity':.45,'fill-outline-color':'#9b702c'}});
+    gl.addLayer({id:'eclipse-center',type:'line',source:'eclipse-center',paint:{'line-color':'#765622','line-width':1.5}});
+    gl.addLayer({id:'eclipse-location',type:'circle',source:'eclipse-location',paint:{'circle-radius':6,'circle-color':'#fff','circle-stroke-color':'#284d41','circle-stroke-width':3}});
+    const palestine=document.createElement('div');palestine.textContent='فلسطين';palestine.style.cssText='font:800 14px Tajawal,Arial;color:#214d38;text-shadow:0 0 4px white,0 0 3px white;pointer-events:none';
+    new maplibregl.Marker({element:palestine}).setLngLat([35.1,31.7]).addTo(gl);
+    gl.on('zoom',()=>{palestine.style.visibility=gl.getZoom()>7?'hidden':'visible';});
+    streetReady=true;
+    for(const handler of ['dragging','touchZoom','doubleClickZoom','boxZoom','keyboard'])map[handler].disable();
+    map.getContainer().classList.add('streets-ready');
+    host.style.visibility='visible';
+    syncStreetCamera();refreshStreetLayers();
+    map.attributionControl.addAttribution('<a href="https://openfreemap.org/">OpenFreeMap</a> · <a href="https://openmaptiles.org/">OpenMapTiles</a> · © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>');
+    mapNotice.textContent='خريطة الشوارع والمدن · كبّر باستخدام + أو بإصبعين';
+   });
+   // Leaflet is retained only for fallback and the existing controls/data conversion.
+   map.on('move zoom',syncStreetCamera);
+   gl.on('move',()=>{
+    if(!streetReady||cameraSyncing)return;
+    cameraSyncing=true;
+    try{const c=gl.getCenter();map.setView([c.lat,c.lng],gl.getZoom()+1,{animate:false});}
+    finally{cameraSyncing=false;}
+   });
+   gl.on('click',e=>setLocation(e.lngLat.lat,e.lngLat.lng,'',true));
+   new ResizeObserver(()=>gl.resize()).observe(map.getContainer());
    gl.on('error',()=>{mapNotice.textContent='قد تتأخر بعض تفاصيل الشوارع بسبب الاتصال. خريطة الكسوف ما زالت متاحة.';});
   }catch(error){console.error('Street map loading:',error);mapNotice.textContent=/WebGL/i.test(String(error))?'تفاصيل الشوارع تحتاج دعم WebGL في المتصفح. الخريطة العامة وحسابات الكسوف متاحة.':'تعذر تحميل تفاصيل الشوارع الآن؛ الخريطة العامة وحسابات الكسوف متاحة. أعد تحميل الصفحة للمحاولة.';}
  }
- const detailStyle=document.createElement('style');detailStyle.textContent='#map.streets-ready .country-label:not(.palestine-label){display:none}#map.street-close .country-label{display:none}';document.head.append(detailStyle);
+ const detailStyle=document.createElement('style');detailStyle.textContent='#map.streets-ready .leaflet-map-pane{display:none}#streetCanvas .maplibregl-popup-content{font-family:Tajawal;text-align:right}#map.street-close .country-label{display:none}';document.head.append(detailStyle);
  map.on('zoomend',()=>map.getContainer().classList.toggle('street-close',map.getZoom()>8));
  detailedMap();
 
- function sync(){if(!band)return;$('#partial').checked?partialLayer.addTo(map):map.removeLayer(partialLayer);$('#band').checked?band.addTo(map):map.removeLayer(band);$('#center').checked?line.addTo(map):map.removeLayer(line);}
+ function sync(){if(!band)return;$('#partial').checked?partialLayer.addTo(map):map.removeLayer(partialLayer);$('#band').checked?band.addTo(map):map.removeLayer(band);$('#center').checked?line.addTo(map):map.removeLayer(line);refreshStreetLayers();}
  async function loadMap(){let req=++request,year=$('#event').value;$('#mapTitle').textContent='جارٍ تحميل الخريطة…';try{
  const [data,partial,elementData]=await Promise.all([fetch(`path${year}.json`).then(r=>r.json()),fetch(`partial${year}.json`).then(r=>r.json()),events||fetch('elements.json').then(r=>r.json())]);if(req!==request)return;events=elementData;rows=data;
  [band,line,partialLayer].forEach(x=>{if(x)map.removeLayer(x)});
@@ -110,8 +161,8 @@ if(typeof L!=='undefined'){
  band=L.polygon([...rows.map(r=>r.n),...rows.map(r=>r.s).reverse()],{interactive:false,color:'#9b702c',weight:1,fillColor:'#ac7b30',fillOpacity:.55});line=L.polyline(rows.map(r=>r.c),{interactive:false,color:'#765622',weight:1.5});sync();
  $('#mapTitle').textContent=`كسوف ${year==='2027'?'٢٠٢٧':'٢٠٣٤'}`;$('#mapSource').href=events[year].source;map.fitBounds(partialLayer.getBounds(),{padding:[15,15],animate:false});setLocation(selected.lat,selected.lon,selected.name);
  }catch(error){$('#mapTitle').textContent='تعذر تحميل الحسابات؛ أعد تحميل الصفحة';$('#localType').textContent='غير متاح الآن';}}
- map.on('click',e=>{const p=e.latlng.wrap();setLocation(p.lat,p.lng,'',true)});
- $('#event').onchange=loadMap;$('#partial').onchange=sync;$('#band').onchange=sync;$('#center').onchange=sync;$('#fit').onclick=()=>{map.closePopup();if(partialLayer)map.fitBounds(partialLayer.getBounds(),{padding:[15,15],animate:false})};
+ map.on('click',e=>{if(streetReady)return;const p=e.latlng.wrap();setLocation(p.lat,p.lng,'',true)});
+ $('#event').onchange=loadMap;$('#partial').onchange=sync;$('#band').onchange=sync;$('#center').onchange=sync;$('#fit').onclick=()=>{map.closePopup();if(streetPopup)streetPopup.remove();if(partialLayer)map.fitBounds(partialLayer.getBounds(),{padding:[15,15],animate:false})};
  $('#city').onchange=()=>{let [lat,lon]=$('#city').value.split(',').map(Number);setLocation(lat,lon,$('#city').selectedOptions[0].textContent,true);map.setView([lat,lon],5,{animate:false})};
  $('#coordinates').onsubmit=e=>{e.preventDefault();const lat=Number($('#latitude').value),lon=Number($('#longitude').value);setLocation(lat,lon,'',true);map.setView([lat,lon],5,{animate:false})};
  $('#localTime').oninput=showTime;$('#orientation').onchange=showTime;loadMap();
